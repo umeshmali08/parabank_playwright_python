@@ -16,7 +16,7 @@ def create_customer() -> dict:
         "last_name": fake.last_name(),
         "street": fake.street_address(),
         "city": fake.city(),
-        "state": "CA",
+        "state": fake.state_abbr(),
         "zip_code": fake.postcode(),
         "phone": fake.msisdn()[:10],
         "ssn": fake.numerify(text="#########"),

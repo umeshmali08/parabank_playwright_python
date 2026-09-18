@@ -1,104 +1,44 @@
 import pytest
 
 from pages.find_transactions_page import FindTransactionsPage
-from utils.currency import currency_to_cents
-from api.parabank_api import ParaBankAPI
-from pages.admin_page import AdminPage
-from pages.registration_page import RegistrationPage
-from pages.open_account_page import OpenAccountPage
 from pages.transfer_funds_page import TransferFundsPage
-from utils.data_factory import create_customer
+from utils.currency import currency_to_cents
 
 
 @pytest.mark.destructive
 @pytest.mark.ui
 def test_scenario_b_transaction_transfers(
-    page,
-    api_context
+    scenario_ab_state
 ):
 
-    api = ParaBankAPI(api_context)
+    state = scenario_ab_state
 
-    # ---------------------------------
-    # STEP 1 - Clean database
-    # ---------------------------------
+    page = state["page"]
 
-    api.clean_database()
+    api = state["api"]
 
-    print(
-        "Database cleaned successfully"
+    customer = state["customer"]
+
+    original_account_id = (
+        state["original_account_id"]
+    )
+
+    checking_account_id = (
+        state["checking_account_id"]
     )
 
     # ---------------------------------
-    # STEP 2 - Configure environment
+    # STEP 1 - Confirm Scenario A user
     # ---------------------------------
-
-    admin = AdminPage(page)
-
-    admin.open()
-
-    admin.set_loan_provider_web_service()
-
-    # ---------------------------------
-    # STEP 3 - Register dynamic user
-    # ---------------------------------
-
-    customer = create_customer()
-
-    registration = RegistrationPage(page)
-
-    registration.open()
-
-    registration.register(customer)
-
-    registration.verify_registration(
-        customer["username"]
-    )
 
     print(
-        f"Registered User: "
+        f"Using Scenario A User: "
         f"{customer['username']}"
     )
 
-    # ---------------------------------
-    # STEP 4 - Get original account
-    # ---------------------------------
-
-    customer_api = api.login(
-        customer["username"],
-        customer["password"]
-    )
-
-    customer_id = customer_api["id"]
-
-    accounts = api.get_customer_accounts(
-        customer_id
-    )
-
-    original_account_id = str(
-        accounts[0]["id"]
-    )
-
     print(
-        f"Original Account ID: "
+        f"Source Account ID: "
         f"{original_account_id}"
-    )
-
-    print(
-        f"Original Balance: "
-        f"{accounts[0]['balance']}"
-    )
-
-    # ---------------------------------
-    # STEP 5 - Open second account
-    # ---------------------------------
-
-    account_page = OpenAccountPage(page)
-
-    account_page.open_page()
-
-    checking_account_id = (
-        account_page.open_checking_account()
     )
 
     print(
@@ -106,16 +46,19 @@ def test_scenario_b_transaction_transfers(
         f"{checking_account_id}"
     )
 
-        # ---------------------------------
-    # Capture balance before transfers
+    # ---------------------------------
+    # STEP 2 - Capture balance
+    # before transfers
     # ---------------------------------
 
     account_before = api.get_account(
         int(original_account_id)
     )
 
-    balance_before_cents = currency_to_cents(
-        f"${account_before['balance']}"
+    balance_before_cents = (
+        currency_to_cents(
+            f"${account_before['balance']}"
+        )
     )
 
     print(
@@ -124,7 +67,7 @@ def test_scenario_b_transaction_transfers(
     )
 
     # ---------------------------------
-    # STEP 6 - Perform transfers
+    # STEP 3 - Perform transfers
     # ---------------------------------
 
     transfers = [
@@ -133,7 +76,9 @@ def test_scenario_b_transaction_transfers(
         "8.99"
     ]
 
-    transfer_page = TransferFundsPage(page)
+    transfer_page = TransferFundsPage(
+        page
+    )
 
     for amount in transfers:
 
@@ -150,7 +95,7 @@ def test_scenario_b_transaction_transfers(
         )
 
     # ---------------------------------
-    # STEP 7 - API transaction check
+    # STEP 4 - API transaction check
     # ---------------------------------
 
     transactions = api.get_transactions(
@@ -165,10 +110,12 @@ def test_scenario_b_transaction_transfers(
     assert len(transactions) >= 3
 
     # ---------------------------------
-    # STEP 8 - Find Transactions via UI
+    # STEP 5 - Find Transactions via UI
     # ---------------------------------
 
-    find_page = FindTransactionsPage(page)
+    find_page = FindTransactionsPage(
+        page
+    )
 
     expected_amounts = [
         "150.00",
@@ -187,13 +134,19 @@ def test_scenario_b_transaction_transfers(
             amount=amount
         )
 
-        debit_text = find_page.get_debit_amount()
-
-        debit_cents = currency_to_cents(
-            debit_text
+        debit_text = (
+            find_page.get_debit_amount()
         )
 
-        total_debit_cents += debit_cents
+        debit_cents = (
+            currency_to_cents(
+                debit_text
+            )
+        )
+
+        total_debit_cents += (
+            debit_cents
+        )
 
         print(
             f"Parsed Debit: "
@@ -202,7 +155,7 @@ def test_scenario_b_transaction_transfers(
         )
 
     # ---------------------------------
-    # STEP 9 - Validate total transfers
+    # STEP 6 - Validate total
     # ---------------------------------
 
     expected_total_cents = sum(
@@ -222,20 +175,29 @@ def test_scenario_b_transaction_transfers(
         f"{total_debit_cents} cents"
     )
 
-    assert total_debit_cents == expected_total_cents
+    assert (
+        total_debit_cents
+        == expected_total_cents
+    )
 
-    assert expected_total_cents == 18449
+    assert (
+        expected_total_cents
+        == 18449
+    )
 
     # ---------------------------------
-    # STEP 10 - Validate balance deduction
+    # STEP 7 - Validate balance
+    # deduction
     # ---------------------------------
 
     account_after = api.get_account(
         int(original_account_id)
     )
 
-    balance_after_cents = currency_to_cents(
-        f"${account_after['balance']}"
+    balance_after_cents = (
+        currency_to_cents(
+            f"${account_after['balance']}"
+        )
     )
 
     actual_deduction_cents = (

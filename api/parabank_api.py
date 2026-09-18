@@ -17,8 +17,47 @@ class ParaBankAPI:
                 f"Response: {response.text()}"
             )
 
+    @staticmethod
+    def _is_cloudflare_response(
+        response: APIResponse
+    ) -> bool:
+        """
+        Detect a Cloudflare challenge page without relying
+        only on a specific HTTP status such as 403.
+        """
+
+        try:
+            body = response.text().lower()
+        except Exception:
+            return False
+
+        strong_indicators = [
+            "performing security verification",
+            "security service to protect against malicious bots",
+            "enable javascript and cookies to continue",
+            "challenges.cloudflare.com",
+            "/cdn-cgi/challenge-platform/",
+            "_cf_chl",
+        ]
+
+        if any(
+            indicator in body
+            for indicator in strong_indicators
+        ):
+            return True
+
+        if (
+            "just a moment" in body
+            and "cloudflare" in body
+        ):
+            return True
+
+        return False
+
     def get_openapi(self) -> dict:
-        response = self.request.get("openapi.json")
+        response = self.request.get(
+            "openapi.json"
+        )
 
         self._assert_ok(
             response,
@@ -27,12 +66,24 @@ class ParaBankAPI:
 
         return response.json()
 
-    def register_customer(self, customer: dict):
+    def register_customer(
+        self,
+        customer: dict
+    ):
+        """
+        Register a customer without launching a browser.
 
-        register_url = f"{UI_BASE_URL}register.htm"
+        ParaBank registration is exposed through the web form
+        rather than the REST banking endpoints, so Playwright's
+        APIRequestContext is used to submit the registration form.
+        """
 
-        # First GET registration page
-        # so ParaBank can establish session/cookies.
+        register_url = (
+            f"{UI_BASE_URL}register.htm"
+        )
+
+        # First GET registration page so ParaBank can
+        # establish the required session/cookies.
         get_response = self.request.get(
             register_url,
             headers={
@@ -40,22 +91,17 @@ class ParaBankAPI:
             }
         )
 
-        # Read response before normal assertion.
-        get_response_body = get_response.text()
-
-        # Handle Cloudflare challenge on GET.
-        if get_response.status == 403 and (
-            "Just a moment" in get_response_body
-            or "challenges.cloudflare.com" in get_response_body
-            or "_cf_chl" in get_response_body
-            or "Enable JavaScript and cookies to continue"
-            in get_response_body
+        # Cloudflare is an external environment restriction.
+        if self._is_cloudflare_response(
+            get_response
         ):
             pytest.skip(
-                "ParaBank registration page was blocked by "
-                "Cloudflare. External public sandbox limitation."
+                "ParaBank registration page was blocked "
+                "by Cloudflare. External public sandbox "
+                "limitation."
             )
 
+        # Any non-Cloudflare HTTP problem remains a real failure.
         self._assert_ok(
             get_response,
             "Open registration page"
@@ -104,33 +150,36 @@ class ParaBankAPI:
             }
         )
 
-        # Read POST response before normal assertion.
+        # Read body once for normal registration validations.
         response_body = response.text()
 
-        # Handle Cloudflare challenge on POST.
-        if response.status == 403 and (
-            "Just a moment" in response_body
-            or "challenges.cloudflare.com" in response_body
-            or "_cf_chl" in response_body
-            or "Enable JavaScript and cookies to continue"
-            in response_body
+        # Detect Cloudflare before normal HTTP assertion.
+        if self._is_cloudflare_response(
+            response
         ):
             pytest.skip(
-                "ParaBank customer registration was blocked by "
-                "Cloudflare. External public sandbox limitation."
+                "ParaBank customer registration was "
+                "blocked by Cloudflare. External public "
+                "sandbox limitation."
             )
 
+        # Genuine HTTP errors must still fail.
         self._assert_ok(
             response,
             "Register customer"
         )
 
-        if "This username already exists." in response_body:
+        # Genuine duplicate username must fail.
+        if (
+            "This username already exists."
+            in response_body
+        ):
             raise AssertionError(
                 f"Username already exists: "
                 f"{customer['username']}"
             )
 
+        # Verify that registration really succeeded.
         if (
             f"Welcome {customer['username']}"
             not in response_body
@@ -171,7 +220,6 @@ class ParaBankAPI:
         name: str,
         value: str
     ):
-
         response = self.request.post(
             f"setParameter/{name}/{value}"
         )
@@ -188,7 +236,6 @@ class ParaBankAPI:
         username: str,
         password: str
     ) -> dict:
-
         response = self.request.get(
             f"login/{username}/{password}"
         )
@@ -204,7 +251,6 @@ class ParaBankAPI:
         self,
         customer_id: int
     ) -> list:
-
         response = self.request.get(
             f"customers/{customer_id}/accounts"
         )
@@ -220,7 +266,6 @@ class ParaBankAPI:
         self,
         account_id: int
     ) -> dict:
-
         response = self.request.get(
             f"accounts/{account_id}"
         )
@@ -238,7 +283,6 @@ class ParaBankAPI:
         account_type: int,
         from_account_id: int
     ) -> dict:
-
         response = self.request.post(
             "createAccount",
             params={
@@ -265,12 +309,14 @@ class ParaBankAPI:
         account_id: int,
         amount
     ):
-
         response = self.request.post(
             "deposit",
             params={
-                "accountId": account_id,
-                "amount": amount
+                "accountId":
+                    account_id,
+
+                "amount":
+                    amount
             },
         )
 
@@ -287,7 +333,6 @@ class ParaBankAPI:
         to_account_id: int,
         amount
     ):
-
         response = self.request.post(
             "transfer",
             params={
@@ -316,7 +361,6 @@ class ParaBankAPI:
         down_payment,
         from_account_id: int
     ) -> dict:
-
         response = self.request.post(
             "requestLoan",
             params={
@@ -345,7 +389,6 @@ class ParaBankAPI:
         self,
         account_id: int
     ) -> list:
-
         response = self.request.get(
             f"accounts/{account_id}/transactions"
         )
