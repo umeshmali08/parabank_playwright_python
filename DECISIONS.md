@@ -36,18 +36,43 @@ Calls cleanDB
 User A is removed
         ↓
 Worker A fails
-
 Decision
 
-To reduce state contention, the framework uses the following controls:
+The framework uses the following controls:
 
 Generate unique customer data for every run using Faker and unique identifiers.
 Do not use hardcoded usernames.
-Mark tests that call global reset operations as destructive.
-Keep reset-bearing tests serial.
-Use a GitHub Actions concurrency group so multiple CI runs from the same repository do not reset the public environment at the same time.
-Avoid parallel execution against the shared public ParaBank sandbox.
+Keep global reset operations serial.
+Use a GitHub Actions concurrency group so multiple CI runs from the same repository do not reset the shared ParaBank environment at the same time.
+Avoid parallel execution of reset-bearing scenarios against the public sandbox.
 Use isolated ParaBank environments if true parallel execution is required.
+Shared Scenario A/B State
+
+Scenario B is required to continue using the customer created for Scenario A.
+
+To avoid creating a second customer or resetting the database between the two scenarios, the framework uses the session-scoped fixture:
+
+scenario_ab_state
+
+The fixture performs the shared setup once and stores:
+
+customer
+customer_id
+original_account_id
+checking_account_id
+loan_account_id
+loan_balance
+
+Scenario A validates the loan workflow using this state.
+
+Scenario B then continues with the same customer and account IDs to perform the transaction workflow.
+
+This avoids:
+
+re-registering another customer for Scenario B
+resetting Scenario A data before Scenario B
+relying on separate duplicated setup logic
+inconsistent account state between the scenarios
 Why Unique Data Alone Is Not Enough
 
 Unique customer data protects against collisions such as:
@@ -62,22 +87,22 @@ because that operation affects the shared database globally.
 
 Limitation
 
-The framework can reduce collisions within its own test suite and CI pipeline, but it cannot prevent an external user of the public ParaBank sandbox from resetting the environment.
+The framework can reduce collisions within its own test suite and CI pipeline, but it cannot prevent another external user of the public ParaBank sandbox from resetting the environment.
 
-Therefore, the public ParaBank environment is treated as an external test-environment limitation.
+Therefore, the public ParaBank instance is treated as an external test-environment limitation.
 
-For reliable parallel execution in a real project, each CI worker should use its own isolated ParaBank environment.
+For reliable parallel execution in a real project, each CI worker should use an isolated environment.
 
 2. Currency Handling
 Problem
 
-Scenario B requires the framework to perform three fund transfers:
+Scenario B performs three fund transfers:
 
 $150.00
 $25.50
 $8.99
 
-The framework must parse the transaction values from the UI, calculate the total transferred amount, and verify that the account balance deduction matches the same amount.
+The framework must parse transaction values from the UI, calculate the total transferred amount, and verify that the source-account balance deduction matches the same amount.
 
 The expected total is:
 
@@ -85,9 +110,7 @@ $184.49
 
 Using normal binary floating-point values for exact financial assertions can introduce precision issues.
 
-For example, decimal values may internally be represented approximately rather than exactly.
-
-This makes direct financial equality checks unreliable.
+Decimal values may internally be represented approximately rather than exactly, making direct financial equality checks unreliable.
 
 Decision
 
@@ -98,8 +121,8 @@ Currency values are normalized to two decimal places and converted into integer 
 Example:
 
 $150.00 → 15000 cents
-$25.50  →  2550 cents
-$8.99   →   899 cents
+$25.50  → 2550 cents
+$8.99   → 899 cents
 
 The calculation becomes:
 
@@ -113,7 +136,7 @@ which represents:
 
 $184.49
 
-The framework then compares integer values:
+The framework compares integer values:
 
 assert total_debit_cents == expected_total_cents
 
@@ -121,7 +144,7 @@ instead of relying on floating-point equality.
 
 Additional Validation
 
-The framework also captures the source account balance immediately before the transfers and retrieves the balance again after the transfers.
+The source-account balance is captured immediately before the transfers and retrieved again after the transfers.
 
 Example:
 
@@ -133,45 +156,54 @@ Actual Deduction:
 
 The framework validates that:
 
-Expected transfer total
+Expected Transfer Total
 =
-UI transaction total
+UI Transaction Total
 =
-Actual account balance deduction
+Actual Account Balance Deduction
 
 This provides stronger validation than checking only the transaction table.
 
 Note on Assignment Wording
 
-The assignment mentions floating-point precision handling in JavaScript/TypeScript.
+The assignment refers to floating-point handling in JavaScript/TypeScript.
 
-Because this solution uses the permitted Playwright Python stack, the equivalent issue is handled using Python Decimal and integer cents.
+Because this solution uses the permitted Playwright Python stack, the equivalent precision issue is handled using Python Decimal and integer cents.
 
-3. API vs UI Boundary
-Goal
+3. Design Pattern and API vs UI Boundary
+Design Pattern
 
-The framework separates:
+The framework follows the Page Object Model pattern.
 
-Environment setup
-Server-side operations
-Backend validation
-User-visible business journeys
+UI behavior is encapsulated in dedicated Page Objects such as:
 
-The intention is to use APIs where they improve speed and determinism, while keeping required user-facing flows in the UI.
+RegistrationPage
+AdminPage
+OpenAccountPage
+LoanPage
+TransferFundsPage
+FindTransactionsPage
+
+Backend operations are encapsulated in:
+
+ParaBankAPI
+
+Reusable test data, currency handling, schemas, and shared state are separated into dedicated utility and fixture layers.
+
+This keeps test cases focused on business workflows rather than implementation details.
 
 API Responsibilities
 
-Playwright APIRequestContext is used for operations such as:
+Playwright APIRequestContext is used for:
 
 database cleanup
-customer login
+customer authentication
 customer account retrieval
 account lookup
 deposits
-transfers in API-focused scenarios
-loan-related backend validation
-transaction history retrieval
-server-side state validation
+transaction-history retrieval
+backend balance validation
+API-focused scenarios
 Scenario C execution
 
 Examples:
@@ -183,30 +215,22 @@ api.get_account(...)
 api.deposit(...)
 api.get_transactions(...)
 
-APIs are preferred for:
-
-setup
-teardown
-backend verification
-direct server operations
-API-only scenarios
-
-because they are faster and less dependent on UI rendering.
+APIs are preferred for setup and backend verification where UI interaction would add unnecessary overhead.
 
 UI Responsibilities
 
 Page Objects are used for user-visible workflows such as:
 
 customer registration
-opening a new Checking account
 configuring the Loan Provider through the Admin UI
+opening a Checking account
 requesting a loan
 performing fund transfers
 searching for transactions
 validating visible loan status
-reading the HTML transaction table
+extracting transaction values from the HTML table
 
-These remain UI actions because they represent the user journeys required by the assignment.
+These actions remain UI-based because they represent the user journeys required by the assignment.
 
 Scenario A Boundary
 
@@ -222,7 +246,7 @@ UI
 Register Dynamic Customer
         ↓
 UI
-Open New Checking Account
+Open Checking Account
         ↓
 UI
 Request Loan
@@ -238,12 +262,16 @@ Verify Loan Balance
 
 The UI is used for the business workflow, while the API is used for deterministic environment setup and backend verification.
 
-This keeps the test meaningful from an end-user perspective while avoiding unnecessary UI-only validation.
-
 Scenario B Boundary
 
-Scenario B uses the UI for the business flow:
+Scenario B continues using the same customer and account state created for Scenario A.
 
+Scenario A Shared State
+        ↓
+Same Customer
+Same Original Account
+Same Checking Account
+        ↓
 UI
 Perform Fund Transfers
         ↓
@@ -256,9 +284,7 @@ Read HTML Transaction Table
 Parse Currency Values
         ↓
 Calculate $184.49
-
-The API is then used to retrieve the account balance:
-
+        ↓
 API
 Get Source Account
         ↓
@@ -266,13 +292,13 @@ Compare Balance Before and After
         ↓
 Verify Deduction = $184.49
 
-This provides both UI validation and backend-state verification.
+This provides both UI validation and backend-state verification while satisfying the requirement that Scenario B use the user created for Scenario A.
 
 Scenario C Boundary
 
 Scenario C is intentionally browserless.
 
-ParaBank's documented REST API does not expose a customer registration endpoint.
+ParaBank's banking REST API does not expose customer registration as a direct REST operation.
 
 To keep the scenario headless, the framework submits the registration form through Playwright APIRequestContext without launching a browser.
 
@@ -290,22 +316,32 @@ REST Transaction History
         ↓
 Pydantic Schema Validation
 
-This keeps Scenario C fully headless while still allowing it to create its own dynamic test data.
+A predefined TypeScript transaction contract is included in:
 
+contracts/transaction.ts
+
+and runtime response validation is performed using the strict Python schema in:
+
+schemas/transaction.py
 Final Design Principle
 
-The framework follows this rule:
+The framework follows this boundary:
 
 API
-→ setup
+→ environment setup
 → direct server operations
 → backend verification
-→ API-only scenarios
+→ API-focused scenarios
 
 UI
 → user behavior
 → visible workflows
-→ rendering-dependent checks
+→ rendering-dependent validation
 → HTML table extraction
 
-This boundary keeps the framework maintainable, reduces unnecessary UI dependency, and preserves meaningful end-to-end coverage.
+This design keeps the framework maintainable, reduces unnecessary UI dependency, preserves meaningful end-to-end coverage, and keeps the test implementation aligned with the assignment requirements.
+
+
+This version now matches your final implementation much better, especially the **shared Scenario A/B user state**, which the assignment explicitly requires for Scenario B. :contentReference[oaicite:1]{index=1}
+
+Before pushing, replace the old `DECISIONS.md` completely with this version so none of the escaped characters like `\---` or `2\.` remain.
