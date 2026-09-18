@@ -1,3 +1,5 @@
+import pytest
+
 from playwright.sync_api import APIRequestContext, APIResponse
 from config.config import UI_BASE_URL
 
@@ -17,17 +19,17 @@ class ParaBankAPI:
 
     def get_openapi(self) -> dict:
         response = self.request.get("openapi.json")
+
         self._assert_ok(
             response,
             "Get OpenAPI document"
         )
+
         return response.json()
 
     def register_customer(self, customer: dict):
 
-        register_url = (
-            f"{UI_BASE_URL}register.htm"
-        )
+        register_url = f"{UI_BASE_URL}register.htm"
 
         # First GET registration page
         # so ParaBank can establish session/cookies.
@@ -38,12 +40,28 @@ class ParaBankAPI:
             }
         )
 
+        # Read response before normal assertion.
+        get_response_body = get_response.text()
+
+        # Handle Cloudflare challenge on GET.
+        if get_response.status == 403 and (
+            "Just a moment" in get_response_body
+            or "challenges.cloudflare.com" in get_response_body
+            or "_cf_chl" in get_response_body
+            or "Enable JavaScript and cookies to continue"
+            in get_response_body
+        ):
+            pytest.skip(
+                "ParaBank registration page was blocked by "
+                "Cloudflare. External public sandbox limitation."
+            )
+
         self._assert_ok(
             get_response,
             "Open registration page"
         )
 
-        # Submit registration form
+        # Submit registration form.
         response = self.request.post(
             register_url,
             form={
@@ -86,12 +104,26 @@ class ParaBankAPI:
             }
         )
 
+        # Read POST response before normal assertion.
+        response_body = response.text()
+
+        # Handle Cloudflare challenge on POST.
+        if response.status == 403 and (
+            "Just a moment" in response_body
+            or "challenges.cloudflare.com" in response_body
+            or "_cf_chl" in response_body
+            or "Enable JavaScript and cookies to continue"
+            in response_body
+        ):
+            pytest.skip(
+                "ParaBank customer registration was blocked by "
+                "Cloudflare. External public sandbox limitation."
+            )
+
         self._assert_ok(
             response,
             "Register customer"
         )
-
-        response_body = response.text()
 
         if "This username already exists." in response_body:
             raise AssertionError(
